@@ -117,19 +117,6 @@ Automated benchmark executed with `load_test/benchmark.py` running 1,000 mixed r
 
 ---
 
-## 💼 Resume / CV Bullet Points
-
-Here is how you can present this project on your resume:
-
-> - **Architected a distributed URL shortener** in FastAPI and PostgreSQL, scaling horizontal throughput to **300+ req/s** with **16ms median latency** via Redis cache-aside and connection pooling.
-> - **Engineered an atomic Token Bucket rate limiter** in Redis using custom Lua scripts, eliminating concurrent race conditions and enforcing per-client quotas with dynamic `Retry-After` headers.
-> - **Implemented a Twitter Snowflake 64-bit distributed ID generator** (41-bit timestamp, 10-bit machine ID, 12-bit sequence), generating 4M+ collision-free Base62 short codes/sec without DB auto-increment locks.
-> - **Designed a Consistent Hash Ring with virtual nodes** for multi-shard Redis caching, reducing key invalidation on cluster resizing from 100% (modulo) to $<25\%$.
-> - **Decoupled analytics persistence from the redirect hot path** using an asynchronous Redis event queue and batch worker, eliminating row-level write contention during traffic spikes.
-> - **Implemented a 3-state Circuit Breaker** providing transparent database fallback during Redis outages, achieving 99.99% service availability with Prometheus observability.
-
----
-
 ## 🚀 Quickstart Guide
 
 ### Prerequisites
