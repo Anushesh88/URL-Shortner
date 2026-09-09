@@ -37,17 +37,31 @@ TestSessionLocal = async_sessionmaker(
 cp_module.AsyncSessionLocal = TestSessionLocal
 
 
-@pytest_asyncio.fixture(scope="function")
-async def db_session():
-    """Provides a clean in-memory database session for each test."""
+@pytest_asyncio.fixture(scope="function", autouse=True)
+async def setup_test_database():
+    """Ensures in-memory database tables exist and dependency overrides are active for all tests."""
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    async with TestSessionLocal() as session:
-        yield session
+    async def override_get_db():
+        async with TestSessionLocal() as session:
+            yield session
 
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_read_db] = override_get_db
+
+    yield
+
+    app.dependency_overrides.clear()
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+
+
+@pytest_asyncio.fixture(scope="function")
+async def db_session():
+    """Provides a clean in-memory database session for each test."""
+    async with TestSessionLocal() as session:
+        yield session
 
 
 @pytest_asyncio.fixture(scope="function", autouse=True)
@@ -70,17 +84,8 @@ async def reset_cache_and_circuit():
 
 
 @pytest_asyncio.fixture(scope="function")
-async def client(db_session):
-    """Provides an async HTTP test client with database dependency overrides."""
-    async def override_get_db():
-        async with TestSessionLocal() as session:
-            yield session
-
-    app.dependency_overrides[get_db] = override_get_db
-    app.dependency_overrides[get_read_db] = override_get_db
-
+async def client():
+    """Provides an async HTTP test client."""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
         yield ac
-
-    app.dependency_overrides.clear()
