@@ -51,3 +51,31 @@ def test_minimal_key_remapping_on_node_addition():
     assert 0.15 <= remapping_ratio <= 0.35, (
         f"Expected ~25% remapping on adding 4th node, got {remapping_ratio * 100:.1f}%"
     )
+
+
+def test_sharded_cache_manager_multi_node_distribution():
+    """Verifies that ShardedCacheManager dynamically routes keys across multiple Redis shards
+    with isolated circuit breakers per shard."""
+    from app.services.sharded_cache import ShardedCacheManager
+
+    shard_nodes = ["redis://redis-shard-1:6379/0", "redis://redis-shard-2:6379/0"]
+    mgr = ShardedCacheManager(node_urls=shard_nodes, replicas=100)
+
+    # 1. Ensure separate CacheManagers and CircuitBreakers exist per shard
+    assert len(mgr.node_clients) == 2
+    assert "redis://redis-shard-1:6379/0" in mgr.node_clients
+    assert "redis://redis-shard-2:6379/0" in mgr.node_clients
+    assert mgr.node_clients[shard_nodes[0]].circuit_breaker.name != mgr.node_clients[shard_nodes[1]].circuit_breaker.name
+
+    # 2. Hash ring must distribute keys to BOTH shards
+    shard_counts = Counter()
+    for i in range(200):
+        key = f"code_{i}"
+        target_shard = mgr.get_node_for_key(key)
+        shard_counts[target_shard] += 1
+
+    assert shard_counts[shard_nodes[0]] > 0
+    assert shard_counts[shard_nodes[1]] > 0
+    # Both shards should have roughly balanced distribution
+    assert 60 <= shard_counts[shard_nodes[0]] <= 140
+    assert 60 <= shard_counts[shard_nodes[1]] <= 140

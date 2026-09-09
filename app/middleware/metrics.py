@@ -86,8 +86,16 @@ class MetricsMiddleware(BaseHTTPMiddleware):
 
 def get_prometheus_metrics_response() -> Response:
     """Generates Prometheus scrapable metrics payload."""
+    from app.services.sharded_cache import sharded_cache_manager
     from app.services.circuit_breaker import redis_circuit_breaker
-    circuit_breaker_state_gauge.labels(name="redis_circuit").set(redis_circuit_breaker.metric_value)
+
+    if sharded_cache_manager.node_clients:
+        for url, client_mgr in sharded_cache_manager.node_clients.items():
+            circuit_breaker_state_gauge.labels(name=client_mgr.circuit_breaker.name).set(
+                client_mgr.circuit_breaker.metric_value
+            )
+    else:
+        circuit_breaker_state_gauge.labels(name="redis_circuit").set(redis_circuit_breaker.metric_value)
 
     data = generate_latest()
     return Response(content=data, media_type=CONTENT_TYPE_LATEST)

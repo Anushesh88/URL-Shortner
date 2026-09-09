@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     # Observability
     PROMETHEUS_ENABLED: bool = True
 
+    # Dev/Test safety flags
+    ALLOW_FAKE_REDIS: bool = False
+
+    @property
+    def is_development_or_test(self) -> bool:
+        """Only allow in-memory FakeRedis fallback in explicit dev/test environments."""
+        return self.APP_ENV in ("development", "testing") or self.ALLOW_FAKE_REDIS
+
     @property
     def redis_node_list(self) -> List[str]:
         return [node.strip() for node in self.REDIS_NODES.split(",") if node.strip()]

@@ -14,6 +14,7 @@ os.environ["RATE_LIMIT_REFILL_RATE"] = "1.0"
 from app.models.database import Base, get_db, get_read_db
 import app.models  # Ensures all models (URL, ClickAnalytics) are registered on Base.metadata
 from app.services.cache import cache_manager
+from app.services.sharded_cache import sharded_cache_manager
 from app.services.circuit_breaker import redis_circuit_breaker, CircuitState
 import app.services.click_processor as cp_module
 from app.main import app
@@ -50,6 +51,13 @@ async def reset_cache_and_circuit():
     cache_manager._is_fake = True
     redis_circuit_breaker.state = CircuitState.CLOSED
     redis_circuit_breaker.failure_count = 0
+
+    for client_mgr in sharded_cache_manager.node_clients.values():
+        client_mgr._client = fake_redis
+        client_mgr._is_fake = True
+        client_mgr.circuit_breaker.state = CircuitState.CLOSED
+        client_mgr.circuit_breaker.failure_count = 0
+
     yield fake_redis
     await fake_redis.flushall()
 

@@ -10,7 +10,7 @@ from app.config import settings
 from app.models.database import get_db, get_read_db
 from app.models.url import URL
 from app.schemas.url import ShortenRequest, ShortenResponse, URLDetailResponse
-from app.services.cache import cache_manager
+from app.services.sharded_cache import sharded_cache_manager
 from app.services.click_processor import click_processor
 from app.services.encoding import encode
 from app.services.id_generator import id_generator
@@ -74,7 +74,7 @@ async def shorten_url(
     # Populate cache-aside immediately
     url_dict = new_url.to_dict()
     ttl = payload.expires_in_seconds if payload.expires_in_seconds else settings.CACHE_TTL_SECONDS
-    await cache_manager.set_url(short_code, url_dict, ttl=ttl)
+    await sharded_cache_manager.set_url(short_code, url_dict, ttl=ttl)
 
     base_url = str(request.base_url).rstrip("/")
     short_url = f"{base_url}/{short_code}"
@@ -105,7 +105,7 @@ async def redirect_url(
     user_agent = request.headers.get("user-agent")
 
     # 1. Check Redis Cache
-    cached_data = await cache_manager.get_url(code)
+    cached_data = await sharded_cache_manager.get_url(code)
     if cached_data:
         cache_operations_total.labels(operation="get", status="hit").inc()
 
@@ -116,7 +116,7 @@ async def redirect_url(
             if exp_dt.tzinfo is None:
                 exp_dt = exp_dt.replace(tzinfo=timezone.utc)
             if exp_dt < datetime.now(timezone.utc):
-                await cache_manager.delete_url(code)
+                await sharded_cache_manager.delete_url(code)
                 raise HTTPException(status_code=status.HTTP_410_GONE, detail="Short URL has expired.")
 
         # Non-blocking click enqueue (off hot path)
@@ -145,7 +145,7 @@ async def redirect_url(
         raise HTTPException(status_code=status.HTTP_410_GONE, detail="Short URL has expired.")
 
     # 3. Populate Redis Cache
-    await cache_manager.set_url(code, url_record.to_dict())
+    await sharded_cache_manager.set_url(code, url_record.to_dict())
 
     # 4. Enqueue click analytics
     await click_processor.enqueue_click(
@@ -182,7 +182,7 @@ async def delete_url(
     await db.commit()
 
     # Invalidate Redis cache
-    await cache_manager.delete_url(code)
+    await sharded_cache_manager.delete_url(code)
     cache_operations_total.labels(operation="delete", status="success").inc()
 
     return {"message": "URL deleted successfully", "short_code": code}

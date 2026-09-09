@@ -101,6 +101,7 @@ services:
       REDIS_URL: redis://redis1:6379/0
       CLICK_FLUSH_INTERVAL: 1.0
       CLICK_BATCH_SIZE: 100
+      APP_ENV: production
     depends_on:
       postgres:
         condition: service_healthy

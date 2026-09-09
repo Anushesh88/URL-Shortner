@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.models.database import init_db
 from app.services.cache import cache_manager
+from app.services.sharded_cache import sharded_cache_manager
 from app.services.click_processor import click_processor
 from app.routes.shortener import router as shortener_router
 from app.routes.analytics import router as analytics_router
@@ -49,6 +50,7 @@ async def lifespan(app: FastAPI):
         await drain_task
     except asyncio.CancelledError:
         pass
+    await sharded_cache_manager.close()
     await cache_manager.close()
 
 

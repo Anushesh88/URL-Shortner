@@ -7,7 +7,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.config import settings
-from app.services.cache import cache_manager
+from app.services.sharded_cache import sharded_cache_manager
 
 logger = logging.getLogger("rate_limiter")
 
@@ -70,7 +70,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         refill_rate = settings.RATE_LIMIT_REFILL_RATE
         now = time.time()
 
-        redis = await cache_manager.get_client()
+        redis = await sharded_cache_manager.get_client_for_key(client_id)
         result = await redis.eval(
             TOKEN_BUCKET_LUA,
             1,
@@ -91,7 +91,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         window_ms = settings.RATE_LIMIT_WINDOW_SECONDS * 1000
         max_requests = settings.RATE_LIMIT_MAX_REQUESTS
 
-        redis = await cache_manager.get_client()
+        redis = await sharded_cache_manager.get_client_for_key(client_id)
         result = await redis.eval(
             SLIDING_WINDOW_LUA,
             1,

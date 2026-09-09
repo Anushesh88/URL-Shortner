@@ -87,14 +87,17 @@ A production-grade, horizontally scalable URL Shortener and Rate Limiting servic
 ### 4. Cache Sharding: Consistent Hash Ring vs. Modulo Hashing
 * **Whiteboard Problem**: If Redis cache is partitioned across $N$ servers using modulo hashing (`hash(key) % N`), adding or removing a single node remaps almost **$100\%$ of keys**, causing instantaneous cache stampedes on the database.
 * **Our Solution**: Engineered a **Consistent Hash Ring** (`app/services/hash_ring.py`) with 100 virtual node replicas per physical server using 128-bit MD5 hashes and binary search (`bisect`):
-  - Adding a node only remaps $\approx 1/N$ of keys.
+  - **Live Path Integration**: Route handlers (`app/routes/shortener.py`) and rate limiters (`app/middleware/rate_limiter.py`) are directly wired to `ShardedCacheManager`, distributing short codes and rate limiting buckets across all active Redis nodes (`redis1`, `redis2`).
+  - Adding or removing a node only remaps $\approx 1/N$ of keys.
   - Virtual nodes eliminate "hot spots" and ensure uniform distribution across all physical shards.
 
-### 5. Fault Tolerance: Circuit Breaker Pattern
-* **Problem**: If Redis crashes or undergoes a network partition, the application shouldn't throw 500 Internal Server Errors or exhaust connection pools waiting on socket timeouts.
-* **Our Solution**: Built a 3-state **Circuit Breaker** (`CLOSED`, `OPEN`, `HALF_OPEN`):
-  - Detects 3 consecutive Redis timeouts/failures and trips to `OPEN`.
-  - In `OPEN` state, requests **fail fast and bypass Redis**, reading directly from PostgreSQL read pool with zero timeout latency penalty.
+### 5. Fault Tolerance: Circuit Breaker Pattern & Outage Safety
+* **Problem**: If Redis crashes or undergoes a network partition, the application shouldn't throw 500 Internal Server Errors or exhaust connection pools waiting on socket timeouts. Furthermore, silent local mock fallbacks in production would cause split-brain cache states and mask critical outages.
+* **Our Solution**:
+  - **Gated Fallback**: In-memory `FakeRedis` fallback is strictly restricted to `APP_ENV in ["development", "testing"]` for zero-dependency local runs. In `production`, connection errors are **never silently swallowed**.
+  - **Isolated Per-Shard Circuit Breakers**: Each physical Redis shard is protected by an independent 3-state `CircuitBreaker` (`CLOSED`, `OPEN`, `HALF_OPEN`).
+  - Detects 3 consecutive timeouts/failures on a shard and trips to `OPEN`.
+  - In `OPEN` state, requests **fail fast and bypass that shard**, reading directly from PostgreSQL read pool with zero timeout latency penalty.
   - After a 10s cooldown, probes Redis in `HALF_OPEN` state; if healthy, automatically recovers to `CLOSED`.
 
 ---
