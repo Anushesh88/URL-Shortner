@@ -100,6 +100,18 @@ A production-grade, horizontally scalable URL Shortener and Rate Limiting servic
   - In `OPEN` state, requests **fail fast and bypass that shard**, reading directly from PostgreSQL read pool with zero timeout latency penalty.
   - After a 10s cooldown, probes Redis in `HALF_OPEN` state; if healthy, automatically recovers to `CLOSED`.
 
+### 6. Concurrency Control: Eliminating Check-Then-Act Race on Custom Slugs
+* **Problem**: In naive URL shorteners, checking if a custom slug exists via `SELECT` followed by `INSERT` suffers from a classic check-then-act race condition under high concurrency. Two simultaneous requests claiming the same alias can both pass the read check, causing the second commit to raise an unhandled database unique constraint `IntegrityError` (which surfaces as a raw HTTP 500 error instead of HTTP 409).
+* **Our Solution**:
+  - The persistence layer wraps database `commit()` in a targeted `try...except IntegrityError` block.
+  - When a unique constraint violation occurs on `short_code`, the session rolls back immediately and returns a clean, descriptive `HTTP 409 Conflict` ("Custom alias '{slug}' is already taken."), ensuring consistency under high horizontal write concurrency.
+
+### 7. Network Security: Anti-Spoofing & Trusted Reverse Proxy Verification
+* **Problem**: Rate limiters that blindly parse the first IP in `X-Forwarded-For` allow malicious users to spoof arbitrary client IPs to evade rate limiting buckets or frame innocent IP addresses.
+* **Our Solution**:
+  - **Nginx Header Overwrite**: Nginx reverse proxy configuration overwrites `X-Forwarded-For` and `X-Real-IP` with `$remote_addr` rather than appending client-provided values.
+  - **Peer Subnet Trust Verification**: The FastAPI middleware inspects the immediate TCP socket peer IP against a CIDR-compatible whitelist (`TRUSTED_PROXIES`). Forwarded IP headers are only evaluated when the request arrives from a trusted proxy; direct untrusted client connections are bound strictly to their physical socket peer IP.
+
 ---
 
 ## 📊 Measured Benchmark Results

@@ -19,9 +19,16 @@ from app.services.circuit_breaker import redis_circuit_breaker, CircuitState
 import app.services.click_processor as cp_module
 from app.main import app
 
+from sqlalchemy.pool import StaticPool
+
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
-test_engine = create_async_engine(TEST_DB_URL, echo=False)
+test_engine = create_async_engine(
+    TEST_DB_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+    echo=False,
+)
 TestSessionLocal = async_sessionmaker(
     bind=test_engine,
     class_=AsyncSession,
@@ -66,7 +73,8 @@ async def reset_cache_and_circuit():
 async def client(db_session):
     """Provides an async HTTP test client with database dependency overrides."""
     async def override_get_db():
-        yield db_session
+        async with TestSessionLocal() as session:
+            yield session
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_read_db] = override_get_db

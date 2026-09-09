@@ -53,10 +53,17 @@ class Settings(BaseSettings):
     # Dev/Test safety flags
     ALLOW_FAKE_REDIS: bool = False
 
+    # Security: Reverse Proxy IP Trust (Comma-separated IPs or CIDR networks)
+    TRUSTED_PROXIES: str = "127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+
     @property
     def is_development_or_test(self) -> bool:
         """Only allow in-memory FakeRedis fallback in explicit dev/test environments."""
         return self.APP_ENV in ("development", "testing") or self.ALLOW_FAKE_REDIS
+
+    @property
+    def trusted_proxy_list(self) -> List[str]:
+        return [p.strip() for p in self.TRUSTED_PROXIES.split(",") if p.strip()]
 
     @property
     def redis_node_list(self) -> List[str]:

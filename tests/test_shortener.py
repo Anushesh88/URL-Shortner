@@ -97,3 +97,53 @@ async def test_delete_url(client: AsyncClient):
     # Ensure 404 after deletion
     get_res = await client.get(f"/{code}", follow_redirects=False)
     assert get_res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_custom_code_concurrent_race_condition(client: AsyncClient):
+    """Verifies that concurrent requests attempting to claim the same custom code
+
+    do not crash with an unhandled 500 DB IntegrityError, but cleanly resolve to 409 Conflict.
+    """
+    custom_alias = "concurrent-race"
+    target_url = "https://example.com/target-race"
+
+    tasks = [
+        client.post("/shorten", json={"long_url": target_url, "custom_code": custom_alias}),
+        client.post("/shorten", json={"long_url": target_url, "custom_code": custom_alias}),
+    ]
+    responses = await asyncio.gather(*tasks)
+    statuses = sorted([r.status_code for r in responses])
+
+    # Exactly one must succeed (201) and the other must return Conflict (409)
+    assert statuses == [201, 409], f"Expected [201, 409], got {statuses}"
+
+
+@pytest.mark.asyncio
+async def test_custom_code_integrity_error_handled_as_409(client: AsyncClient, monkeypatch):
+    """Directly verifies that an IntegrityError during DB commit is caught and returns 409."""
+    from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    orig_commit = AsyncSession.commit
+    committed_once = False
+
+    async def mock_commit(self):
+        nonlocal committed_once
+        if not committed_once:
+            committed_once = True
+            raise IntegrityError(
+                statement="INSERT INTO urls ...",
+                params={},
+                orig=Exception("duplicate key value violates unique constraint 'ix_urls_short_code'"),
+            )
+        return await orig_commit(self)
+
+    monkeypatch.setattr(AsyncSession, "commit", mock_commit)
+
+    res = await client.post(
+        "/shorten",
+        json={"long_url": "https://example.com/forced-race", "custom_code": "forced-race-slug"},
+    )
+    assert res.status_code == 409
+    assert "already taken" in res.json()["detail"]

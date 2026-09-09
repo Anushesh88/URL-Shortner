@@ -1,3 +1,4 @@
+import ipaddress
 import logging
 import os
 import time
@@ -10,6 +11,52 @@ from app.config import settings
 from app.services.sharded_cache import sharded_cache_manager
 
 logger = logging.getLogger("rate_limiter")
+
+
+def is_trusted_proxy(ip_str: str) -> bool:
+    """Verifies whether the immediate peer IP is in the configured trusted proxy list."""
+    if not ip_str:
+        return False
+    try:
+        peer = ipaddress.ip_address(ip_str)
+        for proxy_net in settings.trusted_proxy_list:
+            try:
+                if "/" in proxy_net:
+                    if peer in ipaddress.ip_network(proxy_net, strict=False):
+                        return True
+                elif peer == ipaddress.ip_address(proxy_net):
+                    return True
+            except ValueError:
+                continue
+        return False
+    except ValueError:
+        return False
+
+
+def extract_client_ip(request: Request) -> str:
+    """Safely extracts client IP address with reverse-proxy trust validation.
+    
+    Security Defense:
+    Prevents IP spoofing. X-Forwarded-For and X-Real-IP are ONLY accepted if
+    the immediate peer is a verified trusted proxy (e.g., local Nginx or Docker gateway).
+    Direct client requests cannot forge their IP via custom headers.
+    """
+    peer_ip = request.client.host if request.client else "unknown"
+
+    if is_trusted_proxy(peer_ip):
+        # 1. Prefer X-Real-IP (overwritten by Nginx to $remote_addr)
+        real_ip = request.headers.get("X-Real-IP")
+        if real_ip and real_ip.strip():
+            return real_ip.strip()
+
+        # 2. Check X-Forwarded-For
+        forwarded_for = request.headers.get("X-Forwarded-For")
+        if forwarded_for:
+            ips = [ip.strip() for ip in forwarded_for.split(",") if ip.strip()]
+            if ips:
+                return ips[0]
+
+    return peer_ip
 
 # Load Lua script definitions
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -48,20 +95,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         }
 
     def _get_client_identifier(self, request: Request) -> str:
-        """Derives a stable client key from API Key header or forwarded IP."""
+        """Derives a stable client key from API Key header or validated client IP."""
         api_key = request.headers.get("X-API-Key")
         if api_key:
             return f"apikey:{api_key.strip()}"
 
-        # Check proxy forwarding headers (e.g. Nginx)
-        forwarded_for = request.headers.get("X-Forwarded-For")
-        if forwarded_for:
-            # Take first IP in chain
-            client_ip = forwarded_for.split(",")[0].strip()
-            return f"ip:{client_ip}"
-
-        client_host = request.client.host if request.client else "unknown"
-        return f"ip:{client_host}"
+        client_ip = extract_client_ip(request)
+        return f"ip:{client_ip}"
 
     async def _check_token_bucket(self, client_id: str) -> tuple[bool, int, float]:
         """Runs the atomic token bucket Lua script in Redis."""

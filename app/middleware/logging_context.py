@@ -7,6 +7,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
+from app.middleware.rate_limiter import extract_client_ip
+
 # Configure JSON structured logger
 logger = logging.getLogger("api_access")
 handler = logging.StreamHandler(sys.stdout)
@@ -26,7 +28,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         request.state.request_id = request_id
 
         start_time = time.perf_counter()
-        client_host = request.client.host if request.client else "unknown"
+        client_ip = extract_client_ip(request)
 
         response: Response = await call_next(request)
 
@@ -41,7 +43,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         log_entry = {
             "timestamp": time.time(),
             "request_id": request_id,
-            "client_ip": client_host,
+            "client_ip": client_ip,
             "method": request.method,
             "path": request.url.path,
             "status_code": response.status_code,

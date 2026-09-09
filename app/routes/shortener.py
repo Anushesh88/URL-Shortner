@@ -4,6 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -15,6 +16,7 @@ from app.services.click_processor import click_processor
 from app.services.encoding import encode
 from app.services.id_generator import id_generator
 from app.middleware.metrics import cache_operations_total
+from app.middleware.rate_limiter import extract_client_ip
 
 logger = logging.getLogger("shortener_router")
 router = APIRouter(tags=["Shortener"])
@@ -67,9 +69,15 @@ async def shorten_url(
         expires_at=expires_at,
         is_active=True,
     )
-    db.add(new_url)
-    await db.commit()
-    await db.refresh(new_url)
+    try:
+        db.add(new_url)
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Custom alias '{short_code}' is already taken.",
+        )
 
     # Populate cache-aside immediately
     url_dict = new_url.to_dict()
@@ -100,7 +108,7 @@ async def redirect_url(
     read_db: AsyncSession = Depends(get_read_db),
 ):
     """Redirects client to target URL with cache-aside lookup and async click logging."""
-    client_ip = request.client.host if request.client else None
+    client_ip = extract_client_ip(request)
     referrer = request.headers.get("referer")
     user_agent = request.headers.get("user-agent")
 
